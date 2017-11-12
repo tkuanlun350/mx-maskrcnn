@@ -22,7 +22,7 @@ def train_rpn(network, dataset, image_set, root_path, dataset_path,
     logger.setLevel(logging.INFO)
 
     # setup config
-    config.TRAIN.BATCH_IMAGES = 1
+    config.TRAIN.BATCH_IMAGES = 4
 
     # load symbol
     sym = eval('get_' + network + '_rpn')(num_anchors=config.NUM_ANCHORS)

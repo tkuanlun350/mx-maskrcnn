@@ -157,10 +157,20 @@ class RPNLogLossMetric(mx.metric.EvalMetric):
         keep_inds = np.where(label != -1)[0]
         label = label[keep_inds]
         cls = pred[keep_inds, label]
-
+        """
         cls += 1e-14
         cls_loss = -1 * np.log(cls)
         cls_loss = np.sum(cls_loss)
+
+        """
+        cls += 1e-14
+        gamma = 2
+        alpha = np.ones(cls.shape) * 0.25
+        pos_inds = np.where(label != 0)[0]
+        alpha[pos_inds] = 1 - alpha[pos_inds]
+        cls_loss = alpha*(-1.0 * np.power(1 - cls, gamma) * np.log(cls))
+        cls_loss = np.sum(cls_loss)
+
         self.sum_metric += cls_loss
         self.num_inst += label.shape[0]
 

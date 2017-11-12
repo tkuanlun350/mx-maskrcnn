@@ -15,7 +15,7 @@ roidb extended format [image_index]
 import numpy as np
 import numpy.random as npr
 from ..config import config
-from ..io.image import get_image, tensor_vstack
+from ..io.image import get_image, tensor_vstack, get_image_oar
 from ..processing.bbox_transform import bbox_overlaps, nonlinear_transform
 from ..processing.bbox_regression import expand_bbox_regression_targets
 from ..pycocotools.mask import decode
@@ -28,7 +28,7 @@ def get_rcnn_testbatch(roidb):
     :return: data, label, im_info
     """
     assert len(roidb) == 1, 'Single batch only'
-    imgs, roidb = get_image(roidb)
+    imgs, roidb = get_image_oar(roidb)
     im_array = imgs[0]
     im_info = np.array([roidb[0]['im_info']], dtype=np.float32)
 
@@ -50,7 +50,7 @@ def get_fpn_rcnn_testbatch(roidb):
     :return: data, label, im_info
     """
     assert len(roidb) == 1, 'Single batch only'
-    imgs, roidb = get_image(roidb)
+    imgs, roidb = get_image_oar(roidb)
     im_array = imgs[0]
     im_info = np.array([roidb[0]['im_info']], dtype=np.float32)
 
@@ -101,7 +101,7 @@ def get_fpn_maskrcnn_batch(roidb, maskdb):
     return a dictionary that contains raw data.
     """
     num_images = len(roidb)
-    imgs, roidb = get_image(roidb, scale=config.TRAIN.SCALE)
+    imgs, roidb = get_image_oar(roidb, scale=config.TRAIN.SCALE)
     im_array = tensor_vstack(imgs)
 
     assert config.TRAIN.BATCH_ROIS % config.TRAIN.BATCH_IMAGES == 0, \
@@ -137,11 +137,14 @@ def get_fpn_maskrcnn_batch(roidb, maskdb):
         im_info = roi_rec['im_info']
         isflipped = roi_rec['flipped']
         im_id = roidb[im_i]['image']
-
         mask_targets = maskdb[im_id]['mask_targets']
         mask_labels = maskdb[im_id]['mask_labels']
         mask_inds = maskdb[im_id]['mask_inds']
-
+        """
+        mask_targets = maskdb[im_i]['mask_targets']
+        mask_labels = maskdb[im_i]['mask_labels']
+        mask_inds = maskdb[im_i]['mask_inds']
+        """
         im_rois_on_levels, labels_on_levels, bbox_targets_on_levels, bbox_weights_on_levels, mask_targets_on_levels, mask_weights_on_levels = \
             sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
                             labels, overlaps, bbox_targets, mask_targets=mask_targets, mask_labels=mask_labels, mask_inds=mask_inds, isflipped=isflipped, im_info=im_info)
@@ -347,7 +350,8 @@ def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
         assert mask_inds is not None
         mask_targets = np.concatenate([decode(encoded_mask).reshape([1, 28, 28]) for encoded_mask in mask_targets])
         if isflipped:
-            np.flip(mask_targets, -1)
+            # np.flip(mask_targets, -1)
+            mask_targets = np.flip(mask_targets, -1)
 
         def _mask_umap(mask_targets, mask_labels, mask_inds):
             _mask_targets = np.zeros((num_rois, num_classes, 28, 28), dtype=np.int8)

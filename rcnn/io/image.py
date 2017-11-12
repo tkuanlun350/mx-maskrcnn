@@ -5,6 +5,50 @@ import os
 import random
 from ..config import config
 import mxnet as mx
+import cPickle
+
+def get_image_oar(roidb, scale=False):
+    """
+    preprocess image and return processed roidb
+    :param roidb: a list of roidb
+    :return: list of img as in mxnet format
+    roidb add new item['im_info']
+    0 --- x (width, second dim of im)
+    |
+    y (height, first dim of im)
+    """
+    num_images = len(roidb)
+    processed_ims = []
+    processed_roidb = []
+    for i in range(num_images):
+        roi_rec = roidb[i]
+        assert os.path.exists(roi_rec['image']), '%s does not exist'.format(roi_rec['image'])
+        with open(roi_rec['image'], 'rb') as f:
+            _file = cPickle.load(f)
+        im = _file['image']
+        # im = roi_rec['image']
+        if roidb[i]['flipped']:
+            im = im[:, ::-1, :]
+
+        new_rec = roi_rec.copy()
+        if scale:
+            scale_range = config.TRAIN.SCALE_RANGE
+            im_scale = npr.uniform(scale_range[0], scale_range[1])
+            im = cv2.resize(im, None, None, fx=im_scale, fy=im_scale, interpolation=cv2.INTER_LINEAR)
+        else:
+            scale_ind = random.randrange(len(config.SCALES))
+            target_size = config.SCALES[scale_ind][0]
+            max_size = config.SCALES[scale_ind][1]
+            im, im_scale = resize(im, target_size, max_size)
+
+        im_tensor = transform_normal(im, config.PIXEL_MEANS)
+        processed_ims.append(im_tensor)
+        im_info = [im_tensor.shape[2], im_tensor.shape[3], im_scale]
+        new_rec['boxes'] = roi_rec['boxes'].copy() * im_scale
+        new_rec['im_info'] = im_info
+        processed_roidb.append(new_rec)
+
+    return processed_ims, processed_roidb
 
 def get_image(roidb, scale=False):
     """
@@ -67,6 +111,37 @@ def resize(im, target_size, max_size):
 
     return im, im_scale
 
+def transform_normal_inverse(im_tensor, pixel_means):
+    """
+    transform from mxnet im_tensor to ordinary RGB image
+    im_tensor is limited to one image
+    :param im_tensor: [batch, channel, height, width]
+    :param pixel_means: [B, G, R pixel means]
+    :return: im [height, width, channel(RGB)]
+    """
+    assert im_tensor.shape[0] == 1
+    im_tensor = im_tensor.copy()
+    # put channel back
+    channel_swap = (0, 2, 3, 1)
+    im_tensor = im_tensor.transpose(channel_swap)
+    im = im_tensor[0]
+    assert im.shape[2] == 3
+    # im += pixel_means[[2, 1, 0]]
+    im = im.astype(np.uint8)
+    return im
+
+def transform_normal(im, pixel_means):
+    """
+    transform into mxnet tensor
+    substract pixel size and transform to correct format
+    :param im: [height, width, channel] in BGR
+    :param pixel_means: [B, G, R pixel means]
+    :return: [batch, channel, height, width]
+    """
+    im_tensor = np.zeros((1, 3, im.shape[0], im.shape[1]))
+    for i in range(3):
+        im_tensor[0, i, :, :] = ((im[:, :, 2 - i] / np.max(im[:, :, 2 - i].astype(np.float32))) * 255) - pixel_means[2 - i]
+    return im_tensor
 
 def transform(im, pixel_means):
     """

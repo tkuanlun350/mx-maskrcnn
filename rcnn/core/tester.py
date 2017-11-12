@@ -41,7 +41,7 @@ def im_proposal(predictor, data_batch, data_names, scale):
     return scores, boxes, data_dict
 
 
-def generate_proposals(predictor, test_data, imdb, vis=False, thresh=0.):
+def generate_proposals(predictor, test_data, imdb, vis=True, thresh=0.):
     """
     Generate detections results using RPN.
     :param predictor: Predictor
@@ -51,6 +51,7 @@ def generate_proposals(predictor, test_data, imdb, vis=False, thresh=0.):
     :param thresh: thresh for valid detections
     :return: list of detected boxes
     """
+    vis = False
     assert vis or not test_data.shuffle
     data_names = [k[0] for k in test_data.provide_data]
 
@@ -64,6 +65,7 @@ def generate_proposals(predictor, test_data, imdb, vis=False, thresh=0.):
 
         scale = im_info[0, 2]
         scores, boxes, data_dict = im_proposal(predictor, data_batch, data_names, scale)
+        print("boxes :", boxes.shape)
         t2 = time.time() - t
         t = time.time()
 
@@ -158,7 +160,6 @@ def pred_eval_mask(predictor, test_data, imdb, roidb, result_path, vis=False, th
         t = time.time()
 
         scores, boxes, data_dict, mask_output = im_detect_mask(predictor, data_batch, data_names)
-
         t2 = time.time() - t
         t = time.time()
 
@@ -166,7 +167,7 @@ def pred_eval_mask(predictor, test_data, imdb, roidb, result_path, vis=False, th
 
         label = np.argmax(scores, axis=1)
         label = label[:, np.newaxis]
-
+        flag = 0
         for cls in CLASSES:
             cls_ind = CLASSES.index(cls)
             cls_boxes = boxes[:, 4 * cls_ind:4 * (cls_ind + 1)]
@@ -178,6 +179,9 @@ def pred_eval_mask(predictor, test_data, imdb, roidb, result_path, vis=False, th
             keep = nms(dets)
             all_boxes[cls_ind][i] = dets[keep, :]
             all_masks[cls_ind][i] = cls_masks[keep, :]
+            if (cls_masks.shape[0] > 0 and cls == 'Eye'):
+                print cls
+                flag = 1
 
         boxes_this_image = [[]] + [all_boxes[cls_ind][i] for cls_ind in range(1, imdb.num_classes)]
         masks_this_image = [[]] + [all_masks[cls_ind][i] for cls_ind in range(1, imdb.num_classes)]
@@ -193,7 +197,8 @@ def pred_eval_mask(predictor, test_data, imdb, roidb, result_path, vis=False, th
     results_pack = {'all_boxes': all_boxes,
                     'all_masks': all_masks,
                     'results_list': results_list}
-    imdb.evaluate_mask(results_pack)
+    #imdb.evaluate_mask(results_pack)
+    imdb.evaluate_mask_mean_iou(results_pack)
 
 def pred_demo_mask(predictor, test_data, imdb, roidb, result_path, vis=False, thresh=1e-1):
     """
@@ -223,9 +228,10 @@ def pred_demo_mask(predictor, test_data, imdb, roidb, result_path, vis=False, th
     for im_info, data_batch in test_data:
         roi_rec = roidb[i]
         scale = im_info[0, 2]
+        print("scale", im_info[0, 2])
         scores, boxes, data_dict, mask_output = im_detect_mask(predictor, data_batch, data_names)
-
         CLASSES = imdb.classes
+        print(CLASSES)
 
         all_boxes = [[[] for _ in xrange(num_images)]
                      for _ in xrange(imdb.num_classes)]
@@ -233,7 +239,7 @@ def pred_demo_mask(predictor, test_data, imdb, roidb, result_path, vis=False, th
                      for _ in xrange(imdb.num_classes)]
         label = np.argmax(scores, axis=1)
         label = label[:, np.newaxis]
-
+        flag = 0
         for cls in CLASSES:
             cls_ind = CLASSES.index(cls)
             cls_boxes = boxes[:, 4 * cls_ind:4 * (cls_ind + 1)]
@@ -245,16 +251,23 @@ def pred_demo_mask(predictor, test_data, imdb, roidb, result_path, vis=False, th
             dets = np.hstack((cls_boxes, cls_scores)).astype(np.float32)[keep, :]
             keep = nms(dets)
             #print dets.shape, cls_masks.shape
+            if (cls_masks.shape[0] > 0 and cls == 'Chiasm'):
+                print cls
+                flag = 1
             all_boxes[cls_ind] = dets[keep, :]
             all_masks[cls_ind] = cls_masks[keep, :, :]
 
         boxes_this_image = [[]] + [all_boxes[j] for j in range(1, len(CLASSES))]
         masks_this_image = [[]] + [all_masks[j] for j in range(1, len(CLASSES))]
-        filename = roi_rec['image'].split("/")[-1]
-        filename = result_path + '/' + filename.replace('.png', '') + '.jpg'
+        filename = str(np.random.random())
+        filename = result_path + '/' + filename + '.jpg'
         data_dict = dict(zip(data_names, data_batch.data))
+        print("haha", boxes_this_image)
         draw_detection_mask(data_dict['data'], boxes_this_image, masks_this_image, scale, filename)
         i += 1
+        if (flag == 1):
+            print filename
+            exit()
 
 
 def vis_all_detection(im_array, detections, class_names, scale):
@@ -266,16 +279,18 @@ def vis_all_detection(im_array, detections, class_names, scale):
     :param scale: visualize the scaled image
     :return:
     """
+    import matplotlib
+    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import random
-    im = image.transform_inverse(im_array, config.PIXEL_MEANS)
+    im = image.transform_normal_inverse(im_array, config.PIXEL_MEANS)
     plt.imshow(im)
     for j, name in enumerate(class_names):
         if name == '__background__':
             continue
         color = (random.random(), random.random(), random.random())  # generate a random color
         dets = detections[j]
-        for det in dets:
+        for det in dets[0:10]:
             bbox = det[:4] * scale
             score = det[-1]
             rect = plt.Rectangle((bbox[0], bbox[1]),
@@ -286,16 +301,19 @@ def vis_all_detection(im_array, detections, class_names, scale):
             plt.gca().text(bbox[0], bbox[1] - 2,
                            '{:s} {:.3f}'.format(name, score),
                            bbox=dict(facecolor=color, alpha=0.5), fontsize=12, color='white')
-    plt.show()
+    #plt.show()
+    plt.savefig("/data/debugger/test.png")
 
 def draw_detection_mask(im_array, boxes_this_image, masks_this_image, scale, filename):
     import cv2
     import random
-    class_names = ('__background__', 'person', 'rider', 'car', 'truck', 'bus', 'train', 'mcycle', 'bicycle')
+    class_names = ('__background__', 'Brain Stem', 'Chiasm', 'Cochlea', 'Eye',
+                        'Inner Ears', 'Larynx', 'Lens',
+                        'Optic Nerve', 'Spinal Cord')
     color_white = (255, 255, 255)
-    im = image.transform_inverse(im_array.asnumpy(), config.PIXEL_MEANS)
+    im = image.transform_normal_inverse(im_array.asnumpy(), config.PIXEL_MEANS)
     # change to bgr
-    im = cv2.cvtColor(im, cv2.cv.CV_RGB2BGR)
+    im = cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
     for j, name in enumerate(class_names):
         if name == '__background__':
             continue
@@ -303,9 +321,11 @@ def draw_detection_mask(im_array, boxes_this_image, masks_this_image, scale, fil
         dets = boxes_this_image[j]
         masks = masks_this_image[j]
         for i in range(len(dets)):
-            bbox = dets[i, :4] * scale
+            # bbox = dets[i, :4] * scale
+            bbox = dets[i, :4]
             score = dets[i, -1]
             bbox = map(int, bbox)
+            print((bbox[0], bbox[1]), (bbox[2], bbox[3]), im.shape)
             cv2.rectangle(im, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color=color, thickness=2)
             cv2.putText(im, '%s %.3f' % (class_names[j], score), (bbox[0], bbox[1] + 10),
                         color=color_white, fontFace=cv2.FONT_HERSHEY_COMPLEX, fontScale=0.5)
@@ -313,8 +333,11 @@ def draw_detection_mask(im_array, boxes_this_image, masks_this_image, scale, fil
             mask = cv2.resize(mask, (bbox[2] - bbox[0], (bbox[3] - bbox[1])), interpolation=cv2.INTER_LINEAR)
             mask[mask > 0.5] = 1
             mask[mask <= 0.5] = 0
+            cv2.imwrite(filename.replace(".jpg","")+"_mask.jpg", mask*255)
+            print("mask size", mask.shape)
             mask_color = random.randint(0, 255)
             c = random.randint(0, 2)
+            print(im.shape)
             target = im[bbox[1]: bbox[3], bbox[0]: bbox[2], c] + mask_color * mask
             target[target >= 255] = 255
             im[bbox[1]: bbox[3], bbox[0]: bbox[2], c] = target

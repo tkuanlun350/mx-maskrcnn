@@ -4,7 +4,7 @@ export MXNET_ENABLE_GPU_P2P=0
 export PYTHONPATH=incubator-mxnet/python/
 
 MODEL_PATH=model/
-RESULT_PATH=data/cityscape/results/
+RESULT_PATH=data/oar/results/
 
 PREFIX=${MODEL_PATH}final
 DATASET=Cityscape

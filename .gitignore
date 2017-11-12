@@ -1,0 +1,6 @@
+*.pyc
+*.pkl
+*.png
+eval_files/*
+pred_semantic/*
+*.jpg

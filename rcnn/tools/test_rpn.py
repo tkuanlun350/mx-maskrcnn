@@ -50,6 +50,7 @@ def test_rpn(network, dataset, image_set, root_path, dataset_path,
 
     # decide maximum shape
     data_names = [k[0] for k in test_data.provide_data]
+    print("data names ", data_names)
     label_names = None if test_data.provide_label is None else [k[0] for k in test_data.provide_label]
     max_data_shape = [('data', (1, 3, max([v[0] for v in config.SCALES]), max([v[1] for v in config.SCALES])))]
 

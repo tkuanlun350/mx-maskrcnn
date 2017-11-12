@@ -14,7 +14,7 @@ import numpy as np
 import numpy.random as npr
 
 from ..config import config
-from .image import get_image, tensor_vstack
+from .image import get_image, tensor_vstack, get_image_oar
 from ..processing.generate_anchor import generate_anchors, anchors_plane
 from ..processing.bbox_transform import bbox_overlaps, nonlinear_transform
 bbox_transform = nonlinear_transform
@@ -27,7 +27,8 @@ def get_rpn_testbatch(roidb):
     :return: data, label, im_info
     """
     assert len(roidb) == 1, 'Single batch only'
-    imgs, roidb = get_image(roidb)
+    # imgs, roidb = get_image(roidb)
+    imgs, roidb = get_image_oar(roidb)
     im_array = imgs[0]
     im_info = np.array([roidb[0]['im_info']], dtype=np.float32)
 
@@ -45,7 +46,8 @@ def get_rpn_batch(roidb):
      :return: data, label
      """
     # support multiple images per device now
-    imgs, roidb = get_image(roidb, scale=config.TRAIN.SCALE)
+    #imgs, roidb = get_image(roidb, scale=config.TRAIN.SCALE)
+    imgs, roidb = get_image_oar(roidb, scale=config.TRAIN.SCALE)
     im_array = tensor_vstack(imgs)
     # im_array = np.vstack(imgs)
     im_info = []

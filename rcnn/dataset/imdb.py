@@ -192,6 +192,7 @@ class IMDB(object):
         ar: average recall, recalls: vector recalls at each IoU overlap threshold
         thresholds: vector of IoU overlap threshold, gt_overlaps: vector of all ground-truth overlaps
         """
+        ### debug
         area_names = ['all', '0-25', '25-50', '50-100',
                       '100-200', '200-300', '300-inf']
         area_ranges = [[0**2, 1e5**2], [0**2, 25**2], [25**2, 50**2], [50**2, 100**2],

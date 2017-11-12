@@ -11,6 +11,7 @@ import cv2
 import PIL.Image as Image
 import threading
 import Queue
+import cPickle
 
 bbox_transform = nonlinear_transform
 
@@ -101,6 +102,78 @@ def add_bbox_regression_targets(roidb):
 
     return means.ravel(), stds.ravel()
 
+def compute_mask_and_label_oar(ex_rois, ex_labels, seg, flipped):
+    # assert os.path.exists(seg_gt), 'Path does not exist: {}'.format(seg_gt)
+    # im = Image.open(seg_gt)
+    # pixel = list(im.getdata())
+    # pixel = np.array(pixel).reshape([im.size[1], im.size[0]])
+    # im = Image.open(seg)
+    # pixel = list(im.getdata())
+    # ins_seg = np.array(pixel).reshape([im.size[1], im.size[0]])
+    with open(seg, 'rb') as f:
+        _file = cPickle.load(f)
+        ins_seg = _file['masks'] # N * 200 * 200
+        labels = _file['label'] # N * 1
+
+    if flipped:
+        ins_seg = ins_seg[:, ::-1]
+
+    rois = ex_rois
+    n_rois = ex_rois.shape[0]
+    label = ex_labels
+
+    class_id = config.CLASS_ID
+    # mask_target = np.zeros((n_rois, 28, 28), dtype=np.int8)
+    mask_target = []
+    mask_label = np.zeros((n_rois), dtype=np.int8)
+    for n in range(n_rois):
+        # target = ins_seg[int(rois[n, 1]): int(rois[n, 3]), int(rois[n, 0]): int(rois[n, 2])]
+        ids = labels
+        ins_id = 0
+        max_count = 0
+        target_index = 0
+        for index, id in enumerate(ids):
+            if id == class_id[int(label[int(n)])]:
+                # ground truth label == mask label
+                # px = np.where(ins_seg == int(id))
+                px = np.where(ins_seg[index] == 1)
+                print("px:", px[1].shape, px[0].shape)
+                if (px[1].shape[0] == 0):
+                    print(ins_seg[index].shape, labels)
+                    print(np.count_nonzero(ins_seg[index]), len(ins_seg), len(labels))
+                x_min = np.min(px[1])
+                y_min = np.min(px[0])
+                x_max = np.max(px[1])
+                y_max = np.max(px[0])
+                x1 = max(rois[n, 0], x_min)
+                y1 = max(rois[n, 1], y_min)
+                x2 = min(rois[n, 2], x_max)
+                y2 = min(rois[n, 3], y_max)
+                iou = (x2 - x1) * (y2 - y1)
+                iou = iou / ((rois[n, 2] - rois[n, 0]) * (rois[n, 3] - rois[n, 1])
+                             + (x_max - x_min) * (y_max - y_min) - iou)
+                if iou > max_count:
+                    ins_id = 1 # already binary just give 1
+                    max_count = iou
+                    target_index = index
+
+        if max_count == 0:
+            mask = np.zeros([28, 28, 1], dtype=np.uint8, order='F')
+            mask_target.append(encode(mask))
+            continue
+        print(max_count)
+        target = ins_seg[target_index][int(rois[n, 1]): int(rois[n, 3]), int(rois[n, 0]): int(rois[n, 2])]
+        mask = np.zeros(target.shape, dtype=np.uint8)
+        idx = np.where(target == ins_id)
+        mask[idx] = 1
+        mask = cv2.resize(mask, (28, 28), interpolation=cv2.INTER_NEAREST)
+        mask = np.reshape(mask, [28, 28, 1])
+        mask = np.asfortranarray(mask)
+
+        mask_target.append(encode(mask))
+        mask_label[n] = label[int(n)]
+    assert len(mask_target) == n_rois, "len(mask_target)={}, n_rois={}".format(len(mask_target), n_rois)
+    return mask_target, mask_label
 
 
 def compute_mask_and_label(ex_rois, ex_labels, seg, flipped):
@@ -161,6 +234,40 @@ def compute_mask_and_label(ex_rois, ex_labels, seg, flipped):
     assert len(mask_target) == n_rois, "len(mask_target)={}, n_rois={}".format(len(mask_target), n_rois)
     return mask_target, mask_label
 
+def compute_bbox_mask_targets_and_label_oar(rois, overlaps, labels, seg, flipped):
+    """
+    given rois, overlaps, gt labels, seg, compute bounding box mask targets
+    :param rois: roidb[i]['boxes'] k * 4
+    :param overlaps: roidb[i]['max_overlaps'] k * 1
+    :param labels: roidb[i]['max_classes'] k * 1
+    :return: targets[i][class, dx, dy, dw, dh] k * 5
+    """
+    # Ensure ROIs are floats
+    rois = rois.astype(np.float, copy=False)
+
+    # Sanity check
+    if len(rois) != len(overlaps):
+        print 'bbox regression: this should not happen'
+
+    # Indices of ground-truth ROIs
+    gt_inds = np.where(overlaps == 1)[0]
+    if len(gt_inds) == 0:
+        print 'something wrong : zero ground truth rois'
+    # Indices of examples for which we try to make predictions
+    ex_inds = np.where(overlaps >= config.TRAIN.BBOX_REGRESSION_THRESH)[0]
+
+    # Get IoU overlap between each ex ROI and gt ROI
+    ex_gt_overlaps = bbox_overlaps(rois[ex_inds, :], rois[gt_inds, :])
+
+
+    # Find which gt ROI each ex ROI has max overlap with:
+    # this will be the ex ROI's gt target
+    gt_assignment = ex_gt_overlaps.argmax(axis=1)
+    gt_rois = rois[gt_inds[gt_assignment], :]
+    ex_rois = rois[ex_inds, :]
+
+    mask_targets, mask_label = compute_mask_and_label_oar(ex_rois, labels[ex_inds], seg, flipped)
+    return mask_targets, mask_label, ex_inds
 
 def compute_bbox_mask_targets_and_label(rois, overlaps, labels, seg, flipped):
     """
@@ -196,6 +303,70 @@ def compute_bbox_mask_targets_and_label(rois, overlaps, labels, seg, flipped):
 
     mask_targets, mask_label = compute_mask_and_label(ex_rois, labels[ex_inds], seg, flipped)
     return mask_targets, mask_label, ex_inds
+
+def make_mask_targets_oar(roidb):
+    """
+    given roidb, add ['bbox_targets'] and normalize bounding box regression targets
+    :param roidb: roidb to be processed. must have gone through imdb.prepare_roidb
+    :return: means, std variances of targets
+    """
+    print 'add bounding box mask targets'
+    assert len(roidb) > 0
+    assert 'max_classes' in roidb[0]
+
+    num_images = len(roidb)
+
+    maskdb = {}
+
+    # Multi threads processing
+    """
+    im_quene = Queue.Queue(maxsize=0)
+    for im_i in range(num_images):
+        im_quene.put(im_i)
+
+    def process():
+        while not im_quene.empty():
+            im_i = im_quene.get()
+            print "-----process img {}".format(im_i)
+            rois = roidb[im_i]['boxes']
+            max_overlaps = roidb[im_i]['max_overlaps']
+            max_classes = roidb[im_i]['max_classes']
+            ins_seg = roidb[im_i]['ins_seg']
+            flipped = roidb[im_i]['flipped']
+            if flipped:
+                continue
+            mask_targets, mask_labels, mask_inds = \
+                compute_bbox_mask_targets_and_label_oar(rois, max_overlaps, max_classes, ins_seg, flipped)
+            maskdb.update({roidb[im_i]['image']:
+                               {'mask_targets': mask_targets, 'mask_labels': mask_labels, 'mask_inds':mask_inds}
+                           }
+                          )
+            maskdb.update({im_i:
+                               {'mask_targets': mask_targets, 'mask_labels': mask_labels, 'mask_inds':mask_inds}
+                           }
+                          )
+    threads = [threading.Thread(target=process, args=()) for i in xrange(3)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    return maskdb
+    """
+    # # Single thread for debug
+    for im_i in range(num_images):
+        print "-----processing img {}".format(im_i)
+        rois = roidb[im_i]['boxes']
+        max_overlaps = roidb[im_i]['max_overlaps']
+        max_classes = roidb[im_i]['max_classes']
+        ins_seg = roidb[im_i]['ins_seg']
+        flipped = roidb[im_i]['flipped']
+        if flipped:
+            continue
+        mask_targets, mask_labels, mask_inds = \
+            compute_bbox_mask_targets_and_label_oar(rois, max_overlaps, max_classes, ins_seg, flipped)
+        maskdb.update({roidb[im_i]['image']:
+                            {'mask_targets': mask_targets, 'mask_labels': mask_labels, 'mask_inds':mask_inds}
+                        }
+                        )
+    return maskdb
 
 def make_mask_targets(roidb):
     """
